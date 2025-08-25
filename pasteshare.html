@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Paste-to-Share — Dán ảnh là có link</title>
+  <style>
+    :root { --fg:#111; --muted:#666; --bg:#f7f7f9; --card:#fff; --accent:#2563eb; --ok:#10b981; --err:#ef4444; }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{margin:0; font:16px/1.5 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial; color:var(--fg); background:linear-gradient(180deg,#eef2ff,#f8fafc)}
+    .container{max-width:880px;margin:40px auto;padding:24px}
+    .card{background:var(--card); border-radius:18px; box-shadow:0 10px 25px rgba(0,0,0,.06); padding:24px}
+    .header{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-bottom:16px}
+    .title{font-weight:800;font-size:22px}
+    .hint{color:var(--muted)}
+    .zone{border:2px dashed #c7d2fe; background:#eef2ff; border-radius:18px; padding:28px; text-align:center; transition: .2s ease;}
+    .zone.highlight{border-color:var(--accent); background:#e0e7ff}
+    .zone h2{margin:0 0 6px 0; font-size:20px}
+    .zone p{margin:4px 0; color:var(--muted)}
+    .controls{display:flex; gap:12px; justify-content:center; margin-top:12px}
+    button,input[type="file"]::file-selector-button{cursor:pointer}
+    .btn{appearance:none;border:none;border-radius:12px;padding:10px 14px;background:var(--accent);color:#fff;font-weight:700}
+    .btn:disabled{opacity:.5;cursor:not-allowed}
+    .ghost{background:#e2e8f0;color:#111}
+    .row{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px}
+    @media (min-width:720px){ .row{grid-template-columns: 1.2fr .8fr} }
+    .preview{background:#fafafa;border:1px solid #eee;border-radius:14px;padding:12px;display:flex;align-items:center;justify-content:center;min-height:220px}
+    .preview img{max-width:100%;max-height:420px;border-radius:10px}
+    .status{border-radius:12px;border:1px dashed #e5e7eb;background:#fff;padding:14px}
+    .status p{margin:0 0 10px}
+    .urlbox{display:flex;gap:8px}
+    .urlbox input{flex:1;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px}
+    .badge{display:inline-block;padding:4px 8px;border-radius:999px;font-size:12px;font-weight:700}
+    .ok{background:#ecfdf5;color:#065f46}
+    .err{background:#fef2f2;color:#991b1b}
+    .footer{margin-top:22px;color:var(--muted);font-size:13px}
+    small code{background:#f3f4f6;padding:2px 6px;border-radius:6px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="card">
+      <div class="header">
+        <div>
+          <div class="title">Paste‑to‑Share</div>
+          <div class="hint">Chụp màn hình ➜ <strong>Ctrl/⌘ + V</strong> vào khung dưới ➜ nhận ngay link public.</div>
+        </div>
+      </div>
+
+      <div id="dropZone" class="zone" tabindex="0" aria-label="Khu vực dán hoặc kéo thả ảnh">
+        <h2>Dán ảnh vào đây (Ctrl/⌘ + V)</h2>
+        <p>Hoặc kéo & thả tệp ảnh, hoặc chọn file thủ công.</p>
+        <div class="controls">
+          <label class="btn ghost" for="fileInput">Chọn file…</label>
+          <input id="fileInput" type="file" accept="image/*" hidden />
+        </div>
+      </div>
+
+      <div class="row">
+        <div class="preview" id="preview"><span class="hint">Chưa có ảnh…</span></div>
+        <div class="status" id="status">
+          <p><span id="statusBadge" class="badge">Chưa tải lên</span></p>
+          <div class="urlbox">
+            <input id="url" type="text" placeholder="Link sẽ hiện ở đây" readonly />
+            <button class="btn" id="copyBtn" disabled>Sao chép</button>
+          </div>
+          <div class="footer">
+            <small>Tip: Bạn có thể dán nhiều lần; mỗi lần tạo 1 link mới.</small>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // =====================
+    // CẤU HÌNH BẮT BUỘC:
+    // 1) Tạo tài khoản Cloudinary (miễn phí)
+    // 2) Vào Settings ➜ Upload ➜ Add upload preset ➜ chọn Unsigned
+    // 3) Gán tên preset vào UPLOAD_PRESET, và cloud name vào CLOUD_NAME
+    //    (Không cần expose API secret ở client.)
+    // =====================
+    const CLOUD_NAME = "dzl0gw7v3";      // ← thay bằng cloud name của bạn
+    const UPLOAD_PRESET = "Picture"; // ← thay bằng upload preset UNSIGNED
+    const FOLDER = "pastes"; // tuỳ chọn: lưu ảnh vào folder này trên Cloudinary
+
+    const dropZone = document.getElementById('dropZone');
+    const fileInput = document.getElementById('fileInput');
+    const preview = document.getElementById('preview');
+    const statusBox = document.getElementById('status');
+    const statusBadge = document.getElementById('statusBadge');
+    const urlInput = document.getElementById('url');
+    const copyBtn = document.getElementById('copyBtn');
+
+    // UI helpers
+    function setBadge(text, type){
+      statusBadge.textContent = text;
+      statusBadge.className = 'badge ' + (type === 'ok' ? 'ok' : type === 'err' ? 'err' : '');
+    }
+    function showPreview(file){
+      const img = document.createElement('img');
+      img.alt = 'Ảnh xem trước';
+      img.src = URL.createObjectURL(file);
+      preview.innerHTML = '';
+      preview.appendChild(img);
+    }
+
+    // Upload to Cloudinary (unsigned)
+    async function upload(file){
+      if (!CLOUD_NAME || CLOUD_NAME.includes('YOUR_') || !UPLOAD_PRESET || UPLOAD_PRESET.includes('YOUR_')){
+        setBadge('Thiếu cấu hình Cloudinary', 'err');
+        throw new Error('Missing Cloudinary config');
+      }
+      setBadge('Đang tải lên…');
+
+      const endpoint = `https://api.cloudinary.com/v1_1/${encodeURIComponent(CLOUD_NAME)}/image/upload`;
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('upload_preset', UPLOAD_PRESET);
+      if (FOLDER) formData.append('folder', FOLDER);
+      // Tùy chọn: public_id riêng (để tạo URL đẹp). Mặc định để Cloudinary tự sinh.
+      // formData.append('public_id', crypto.randomUUID());
+
+      const res = await fetch(endpoint, { method: 'POST', body: formData });
+      if (!res.ok){
+        const t = await res.text();
+        throw new Error('Upload failed: ' + t);
+      }
+      const data = await res.json();
+      return data.secure_url; // URL public (https)
+    }
+
+    // Handle pasted image
+    async function handleItems(items){
+      let file = null;
+      for (const it of items){
+        if (it.kind === 'file' && it.type.startsWith('image/')){
+          file = it.getAsFile();
+          break;
+        }
+      }
+      if (!file){
+        setBadge('Không thấy ảnh trong clipboard', 'err');
+        return;
+      }
+      showPreview(file);
+      copyBtn.disabled = true; urlInput.value = '';
+      try{
+        const link = await upload(file);
+        urlInput.value = link;
+        setBadge('Xong! Link đã sẵn sàng', 'ok');
+        copyBtn.disabled = false;
+      }catch(err){
+        console.error(err);
+        setBadge('Lỗi tải lên', 'err');
+        alert(err.message);
+      }
+    }
+
+    // Paste
+    document.addEventListener('paste', (e)=>{
+      if (e.clipboardData && e.clipboardData.items){
+        handleItems(e.clipboardData.items);
+      }
+    });
+
+    // Drag & Drop
+    ;['dragenter','dragover'].forEach(evt=>{
+      dropZone.addEventListener(evt, e=>{ e.preventDefault(); e.stopPropagation(); dropZone.classList.add('highlight'); });
+    });
+    ;['dragleave','drop'].forEach(evt=>{
+      dropZone.addEventListener(evt, e=>{ e.preventDefault(); e.stopPropagation(); dropZone.classList.remove('highlight'); });
+    });
+    dropZone.addEventListener('drop', (e)=>{
+      const files = e.dataTransfer?.files;
+      if (files && files.length){
+        const file = files[0];
+        if (!file.type.startsWith('image/')){ setBadge('Vui lòng thả tệp ảnh', 'err'); return; }
+        showPreview(file);
+        copyBtn.disabled = true; urlInput.value = '';
+        upload(file).then(link=>{
+          urlInput.value = link; setBadge('Xong! Link đã sẵn sàng', 'ok'); copyBtn.disabled = false;
+        }).catch(err=>{ console.error(err); setBadge('Lỗi tải lên', 'err'); alert(err.message); });
+      }
+    });
+
+    // File picker
+    fileInput.addEventListener('change', ()=>{
+      const file = fileInput.files?.[0];
+      if (!file) return;
+      if (!file.type.startsWith('image/')){ setBadge('Vui lòng chọn tệp ảnh', 'err'); return; }
+      showPreview(file);
+      copyBtn.disabled = true; urlInput.value = '';
+      upload(file).then(link=>{
+        urlInput.value = link; setBadge('Xong! Link đã sẵn sàng', 'ok'); copyBtn.disabled = false;
+      }).catch(err=>{ console.error(err); setBadge('Lỗi tải lên', 'err'); alert(err.message); });
+    });
+
+    // Copy
+    copyBtn.addEventListener('click', async ()=>{
+      const link = urlInput.value.trim();
+      if (!link) return;
+      try{
+        await navigator.clipboard.writeText(link);
+        copyBtn.textContent = 'Đã sao chép';
+        setTimeout(()=>copyBtn.textContent='Sao chép', 1200);
+      }catch{
+        urlInput.select();
+        document.execCommand('copy');
+      }
+    });
+  </script>
+</body>
+</html>
