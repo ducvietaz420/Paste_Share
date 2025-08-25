@@ -31,6 +31,21 @@ module.exports = async (req, res) => {
   }
 
   try {
+    console.log('🔍 Request received:', req.method, req.url);
+    console.log('📋 Request body:', req.body);
+    
+    // Check Cloudinary config
+    const hasConfig = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
+    console.log('🔑 Cloudinary config available:', hasConfig);
+    
+    if (!hasConfig) {
+      return res.status(500).json({
+        success: false,
+        error: 'Missing Cloudinary configuration',
+        message: 'CLOUDINARY environment variables are not set'
+      });
+    }
+
     const { public_id, folder } = req.body;
 
     // Validate input
@@ -45,11 +60,13 @@ module.exports = async (req, res) => {
     const fullPublicId = folder ? `${folder}/${public_id}` : public_id;
 
     console.log(`🗑️  Attempting to delete image: ${fullPublicId}`);
+    console.log('📁 Folder:', folder);
+    console.log('🆔 Public ID:', public_id);
 
     // Delete image from Cloudinary
     const result = await cloudinary.uploader.destroy(fullPublicId);
 
-    console.log('Deletion result:', result);
+    console.log('✅ Deletion result:', JSON.stringify(result, null, 2));
 
     if (result.result === 'ok') {
       return res.status(200).json({
