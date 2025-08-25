@@ -37,6 +37,9 @@ module.exports = async (req, res) => {
     // Check Cloudinary config
     const hasConfig = !!(process.env.CLOUDINARY_CLOUD_NAME && process.env.CLOUDINARY_API_KEY && process.env.CLOUDINARY_API_SECRET);
     console.log('🔑 Cloudinary config available:', hasConfig);
+    console.log('☁️  Cloud Name:', process.env.CLOUDINARY_CLOUD_NAME);
+    console.log('🔑 API Key:', process.env.CLOUDINARY_API_KEY ? 'SET' : 'MISSING');
+    console.log('🔐 API Secret:', process.env.CLOUDINARY_API_SECRET ? 'SET' : 'MISSING');
     
     if (!hasConfig) {
       return res.status(500).json({
