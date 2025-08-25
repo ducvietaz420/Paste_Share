@@ -1,0 +1,12 @@
+# Cloudinary Configuration for Vercel Environment Variables
+# 
+# 1. Go to your Cloudinary Dashboard > Settings > Security
+# 2. Copy these values to Vercel > Project Settings > Environment Variables
+#
+# Required Environment Variables:
+CLOUDINARY_CLOUD_NAME=your_cloud_name_here
+CLOUDINARY_API_KEY=your_api_key_here  
+CLOUDINARY_API_SECRET=your_api_secret_here
+
+# Optional:
+NODE_ENV=production

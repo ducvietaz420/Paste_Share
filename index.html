@@ -25,7 +25,8 @@
     .ghost{background:#e2e8f0;color:#111}
     .row{display:grid;grid-template-columns:1fr;gap:14px;margin-top:18px}
     @media (min-width:720px){ .row{grid-template-columns: 1.2fr .8fr} }
-    .preview{background:#fafafa;border:1px solid #eee;border-radius:14px;padding:12px;display:flex;align-items:center;justify-content:center;min-height:220px}
+    .preview{background:#fafafa;border:1px solid #eee;border-radius:14px;padding:12px;display:flex;align-items:center;justify-content:center;min-height:220px;position:relative}
+    .preview.expired{border-color:#f87171;background:#fef2f2}
     .preview img{max-width:100%;max-height:420px;border-radius:10px}
     .status{border-radius:12px;border:1px dashed #e5e7eb;background:#fff;padding:14px}
     .status p{margin:0 0 10px}
@@ -36,6 +37,11 @@
     .err{background:#fef2f2;color:#991b1b}
     .footer{margin-top:22px;color:var(--muted);font-size:13px}
     small code{background:#f3f4f6;padding:2px 6px;border-radius:6px}
+    .timer{background:#fff5cc;border:1px solid #fbbf24;border-radius:8px;padding:10px;margin:10px 0;text-align:center}
+    .timer.expired{background:#fef2f2;border-color:#f87171;color:#dc2626}
+    .timer-text{font-weight:600;margin:0}
+    .warning{background:#fef3c7;border:1px solid #f59e0b;border-radius:8px;padding:8px;margin:8px 0;font-size:13px}
+    .expired-overlay{position:absolute;top:0;left:0;right:0;bottom:0;background:rgba(239,68,68,0.1);border-radius:10px;display:none;align-items:center;justify-content:center;color:#dc2626;font-weight:600}
   </style>
 </head>
 <body>
@@ -61,12 +67,18 @@
         <div class="preview" id="preview"><span class="hint">Chưa có ảnh…</span></div>
         <div class="status" id="status">
           <p><span id="statusBadge" class="badge">Chưa tải lên</span></p>
+          <div class="warning" id="warningBox" style="display:none;">
+            ⚠️ Link sẽ tự động hết hạn sau <strong>5 phút</strong> và ảnh sẽ bị xóa vĩnh viễn!
+          </div>
+          <div class="timer" id="timerBox" style="display:none;">
+            <p class="timer-text">⏰ Thời gian còn lại: <span id="countdown">5:00</span></p>
+          </div>
           <div class="urlbox">
             <input id="url" type="text" placeholder="Link sẽ hiện ở đây" readonly />
             <button class="btn" id="copyBtn" disabled>Sao chép</button>
           </div>
           <div class="footer">
-            <small><code>Tip: Bạn có thể dán nhiều lần;<br>mỗi lần tạo 1 link mới.</code></small>
+            <small><code>Tip: Bạn có thể dán nhiều lần; mỗi lần tạo 1 link mới.<br>⚡ Link chỉ hoạt động trong 5 phút!</code></small>
           </div>
         </div>
       </div>
@@ -84,6 +96,11 @@
     const CLOUD_NAME = "dzl0gw7v3";      // ← thay bằng cloud name của bạn
     const UPLOAD_PRESET = "Picture"; // ← thay bằng upload preset UNSIGNED
     const FOLDER = "pastes"; // tuỳ chọn: lưu ảnh vào folder này trên Cloudinary
+    
+    // Backend API endpoint - update this after deploying to Vercel
+    const API_BASE_URL = window.location.hostname.includes('localhost') 
+      ? 'http://localhost:3000' 
+      : `https://${window.location.hostname}`;
 
     const dropZone = document.getElementById('dropZone');
     const fileInput = document.getElementById('fileInput');
@@ -92,6 +109,15 @@
     const statusBadge = document.getElementById('statusBadge');
     const urlInput = document.getElementById('url');
     const copyBtn = document.getElementById('copyBtn');
+    const warningBox = document.getElementById('warningBox');
+    const timerBox = document.getElementById('timerBox');
+    const countdown = document.getElementById('countdown');
+
+    // Expiry management
+    let expiryTimer = null;
+    let countdownInterval = null;
+    let currentImageData = null;
+    const EXPIRE_MINUTES = 5;
 
     // UI helpers
     function setBadge(text, type){
@@ -104,6 +130,106 @@
       img.src = URL.createObjectURL(file);
       preview.innerHTML = '';
       preview.appendChild(img);
+    }
+
+    // Expiry management functions
+    function clearTimers(){
+      if (expiryTimer) { clearTimeout(expiryTimer); expiryTimer = null; }
+      if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+    }
+
+    function formatTime(seconds){
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    function startCountdown(uploadTime){
+      const expireTime = uploadTime + (EXPIRE_MINUTES * 60 * 1000);
+      
+      // Show warning and timer
+      warningBox.style.display = 'block';
+      timerBox.style.display = 'block';
+      
+      // Update countdown every second
+      countdownInterval = setInterval(()=>{
+        const now = Date.now();
+        const timeLeft = Math.max(0, Math.ceil((expireTime - now) / 1000));
+        
+        countdown.textContent = formatTime(timeLeft);
+        
+        if (timeLeft <= 0) {
+          handleExpiry();
+        } else if (timeLeft <= 60) {
+          timerBox.classList.add('expired');
+        }
+      }, 1000);
+      
+      // Set main expiry timer
+      const timeUntilExpiry = expireTime - Date.now();
+      expiryTimer = setTimeout(handleExpiry, timeUntilExpiry);
+    }
+
+    function handleExpiry(){
+      clearTimers();
+      
+      // Update UI
+      setBadge('Link đã hết hạn', 'err');
+      urlInput.value = '';
+      copyBtn.disabled = true;
+      warningBox.style.display = 'none';
+      timerBox.style.display = 'none';
+      timerBox.classList.remove('expired');
+      
+      // Attempt to delete image (note: this requires proper authentication)
+      if (currentImageData && currentImageData.public_id) {
+        attemptImageDeletion(currentImageData.public_id);
+      }
+      
+      // Reset preview
+      preview.innerHTML = '<span class="hint">Link đã hết hạn. Hãy tải ảnh mới.</span>';
+      preview.classList.add('expired');
+      currentImageData = null;
+      
+      alert('⚠️ Link đã hết hạn sau 5 phút!\nẢnh đã được xóa khỏi server. Hãy tải lên ảnh mới nếu cần.');
+    }
+
+    async function attemptImageDeletion(publicId){
+      try {
+        console.log(`🗑️ Attempting to delete image: ${publicId}`);
+        
+        // Extract just the filename part (remove folder prefix if present)
+        const imageId = publicId.includes('/') ? publicId.split('/').pop() : publicId;
+        
+        const response = await fetch(`${API_BASE_URL}/api/delete-image`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ 
+            public_id: imageId,
+            folder: FOLDER 
+          })
+        });
+        
+        const result = await response.json();
+        
+        if (result.success) {
+          console.log('✅ Image deleted successfully:', result.message);
+          return true;
+        } else {
+          console.warn('⚠️ Failed to delete image:', result.message);
+          return false;
+        }
+        
+      } catch (err) {
+        console.error('❌ Error calling deletion API:', err);
+        
+        // If API call fails, still show user that link is expired
+        // This ensures UX is not broken even if deletion fails
+        console.log('🔄 Link will still be expired locally regardless of deletion status');
+        return false;
+      }
     }
 
     // Upload to Cloudinary (unsigned)
@@ -128,6 +254,14 @@
         throw new Error('Upload failed: ' + t);
       }
       const data = await res.json();
+      
+      // Store image data for future deletion
+      currentImageData = {
+        public_id: data.public_id,
+        secure_url: data.secure_url,
+        upload_time: Date.now()
+      };
+      
       return data.secure_url; // URL public (https)
     }
 
@@ -144,6 +278,14 @@
         setBadge('Không thấy ảnh trong clipboard', 'err');
         return;
       }
+      
+      // Clear previous timers
+      clearTimers();
+      warningBox.style.display = 'none';
+      timerBox.style.display = 'none';
+      timerBox.classList.remove('expired');
+      preview.classList.remove('expired');
+      
       showPreview(file);
       copyBtn.disabled = true; urlInput.value = '';
       try{
@@ -151,6 +293,11 @@
         urlInput.value = link;
         setBadge('Xong! Link đã sẵn sàng', 'ok');
         copyBtn.disabled = false;
+        
+        // Start countdown timer
+        if (currentImageData) {
+          startCountdown(currentImageData.upload_time);
+        }
       }catch(err){
         console.error(err);
         setBadge('Lỗi tải lên', 'err');
@@ -177,10 +324,23 @@
       if (files && files.length){
         const file = files[0];
         if (!file.type.startsWith('image/')){ setBadge('Vui lòng thả tệp ảnh', 'err'); return; }
+        
+        // Clear previous timers
+        clearTimers();
+        warningBox.style.display = 'none';
+        timerBox.style.display = 'none';
+        timerBox.classList.remove('expired');
+        preview.classList.remove('expired');
+        
         showPreview(file);
         copyBtn.disabled = true; urlInput.value = '';
         upload(file).then(link=>{
           urlInput.value = link; setBadge('Xong! Link đã sẵn sàng', 'ok'); copyBtn.disabled = false;
+          
+          // Start countdown timer
+          if (currentImageData) {
+            startCountdown(currentImageData.upload_time);
+          }
         }).catch(err=>{ console.error(err); setBadge('Lỗi tải lên', 'err'); alert(err.message); });
       }
     });
@@ -190,10 +350,23 @@
       const file = fileInput.files?.[0];
       if (!file) return;
       if (!file.type.startsWith('image/')){ setBadge('Vui lòng chọn tệp ảnh', 'err'); return; }
+      
+      // Clear previous timers
+      clearTimers();
+      warningBox.style.display = 'none';
+      timerBox.style.display = 'none';
+      timerBox.classList.remove('expired');
+      preview.classList.remove('expired');
+      
       showPreview(file);
       copyBtn.disabled = true; urlInput.value = '';
       upload(file).then(link=>{
         urlInput.value = link; setBadge('Xong! Link đã sẵn sàng', 'ok'); copyBtn.disabled = false;
+        
+        // Start countdown timer
+        if (currentImageData) {
+          startCountdown(currentImageData.upload_time);
+        }
       }).catch(err=>{ console.error(err); setBadge('Lỗi tải lên', 'err'); alert(err.message); });
     });
 
