@@ -1,5 +1,5 @@
 {
-  "name": "pasteshare-backend",
+  "name": "paste-share-backend",
   "version": "1.0.0",
   "description": "Backend service for PasteShare with auto-expiring image links",
   "main": "index.html",
